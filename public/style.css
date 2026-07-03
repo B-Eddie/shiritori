@@ -40,7 +40,7 @@ body {
 /* ---------- screens ---------- */
 .screen { display: none; position: relative; z-index: 1; min-height: 100vh; padding: 24px; }
 .screen.active { display: flex; flex-direction: column; align-items: center; justify-content: center; }
-#screen-game.active { justify-content: flex-start; max-height: 100vh; overflow: hidden; }
+#screen-game.active { justify-content: flex-start; }
 
 .card {
   background: var(--card);
@@ -471,9 +471,9 @@ input::placeholder { color: #9b8fc0; }
 
 /* ---------- word feed ---------- */
 .word-feed {
-  width: min(480px, 92vw); margin: 14px auto 10px;
-  display: flex; flex-direction: column-reverse; gap: 6px;
-  flex: 1; min-height: 0;
+  width: min(480px, 92vw); margin: 10px auto 4px;
+  display: flex; flex-direction: column-reverse; gap: 4px;
+  max-height: 10vh; min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
 }
