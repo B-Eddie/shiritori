@@ -67,7 +67,7 @@
         </div>
         <div class="setting">
           <label>⏭️ Skip chain (0 = never)</label>
-          <div class="seg" data-setting="maxSkips" data-values="0,2,3,4,5"></div>
+          <div class="seg" data-setting="maxSkips" data-values="0,1,2,3,4"></div>
         </div>
       </div>
 
@@ -96,20 +96,18 @@
             <div id="bomb-orbit" class="bomb-orbit"></div>
             <div id="current-letter" class="current-letter">A</div>
             <div id="bomb-label" class="bomb-label">starts with</div>
+            <div id="bomb-typing" class="bomb-typing"></div>
+            <input id="bomb-input" class="bomb-input" autocomplete="off" autocapitalize="off" spellcheck="false" />
+            <div id="wpm-display" class="wpm-display"></div>
           </div>
         </div>
       </div>
-      <div id="players-ring" class="players-ring-outer"></div>
     </div>
 
     <div id="last-word-banner" class="last-word-banner"></div>
 
     <div class="input-zone">
       <div id="turn-indicator" class="turn-indicator"></div>
-      <form id="word-form" autocomplete="off">
-        <input id="word-input" disabled placeholder="wait for your turn…" autocomplete="off" autocapitalize="off" spellcheck="false" />
-        <button class="btn btn-primary" type="submit">GO!</button>
-      </form>
       <p id="reject-msg" class="error-msg"></p>
     </div>
 

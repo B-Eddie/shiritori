@@ -334,8 +334,8 @@ function renderBombOrbit(ordered, turnPlayerId, nextId, isMulti) {
     if (nextId === p.id) el.classList.add("next");
     el.style.left = `calc(50% + ${Math.cos(angle) * r}%)`;
     el.style.top = `calc(50% + ${Math.sin(angle) * r}%)`;
-    el.textContent = p.avatar;
     el.title = p.name;
+    el.textContent = p.avatar;
     container.appendChild(el);
   });
 }
@@ -376,7 +376,6 @@ function renderSeats() {
 
   renderBombOrbit(ordered, g.turnPlayerId, nextId, isMulti);
   renderPlayerOrbit(ordered, g.turnPlayerId, nextId, isMulti);
-  renderOuterSeats(ordered, g.turnPlayerId, nextId, isMulti);
   renderTurnRing(ordered, g.turnPlayerId, nextId);
 }
 
@@ -405,7 +404,6 @@ function renderPlayerOrbit(ordered, turnPlayerId, nextId, isMulti) {
 
     const hearts = p.alive ? "❤️".repeat(Math.max(0, p.lives)) : "";
     el.innerHTML = `
-      <div class="seat-typing" id="typing-${p.id}"></div>
       ${badge}
       <div class="orbit-avatar">
         <span class="orbit-order">${i + 1}</span>
@@ -417,48 +415,28 @@ function renderPlayerOrbit(ordered, turnPlayerId, nextId, isMulti) {
   });
 }
 
-// Solo labels for 1-player edge case; multiplayer uses the orbit around the letter.
-function renderOuterSeats(ordered, turnPlayerId, nextId, isMulti) {
-  const ring = $("players-ring");
-  ring.innerHTML = "";
-  ring.classList.toggle("hidden", isMulti);
-  if (isMulti) return;
-
-  ordered.forEach((p, i) => {
-    const seat = document.createElement("div");
-    seat.className = "seat";
-    seat.id = "seat-" + p.id;
-    seat.style.left = "50%";
-    seat.style.top = "18%";
-    if (!p.alive || !p.connected) seat.classList.add("dead");
-    else if (turnPlayerId === p.id) seat.classList.add("turn");
-
-    const hearts = p.alive ? "❤️".repeat(Math.max(0, p.lives)) : "";
-    seat.innerHTML = `
-      <div class="seat-typing" id="typing-${p.id}"></div>
-      <div class="seat-avatar">
-        <span class="seat-order">${i + 1}</span>
-        ${p.avatar}
-      </div>
-      <div class="seat-name">${escapeHtml(p.name)}${p.id === myId ? " ⭐" : ""}</div>
-      <div class="seat-lives">${hearts}</div>`;
-    ring.appendChild(seat);
-  });
-}
+let turnKeyStrokes = 0;
+let turnStartTime = 0;
+let wpmInterval = null;
 
 function renderTurn() {
   const g = room.game;
   const me = g.turnPlayerId === myId;
   const turnPlayer = room.players.find((p) => p.id === g.turnPlayerId);
-  const input = $("word-input");
-  const submitBtn = $("word-form").querySelector("button");
+  const bombInput = $("bomb-input");
+  const bombTyping = $("bomb-typing");
+  const wpmEl = $("wpm-display");
 
   if (me) {
     $("turn-indicator").innerHTML = `<span class="you">🔥 YOUR TURN! 🔥</span>`;
-    input.disabled = false;
-    submitBtn.disabled = false;
-    input.placeholder = "type a word…";
-    input.focus();
+    bombInput.style.display = "";
+    bombInput.value = "";
+    bombInput.focus();
+    bombTyping.textContent = "";
+    turnKeyStrokes = 0;
+    turnStartTime = 0;
+    if (wpmEl) wpmEl.textContent = "";
+    clearInterval(wpmInterval);
     if (lastTurnPlayerId !== myId) sfx.yourTurn();
   } else {
     const alive = aliveTurnOrder();
@@ -473,10 +451,10 @@ function renderTurn() {
       msg = "You're out — watch the circle!";
     }
     $("turn-indicator").textContent = msg;
-    input.disabled = true;
-    submitBtn.disabled = true;
-    input.placeholder = "wait for your turn…";
-    input.value = "";
+    bombInput.style.display = "none";
+    bombInput.value = "";
+    if (wpmEl) wpmEl.textContent = "";
+    clearInterval(wpmInterval);
   }
   lastTurnPlayerId = g.turnPlayerId;
   $("bomb").classList.add("ticking");
@@ -506,29 +484,59 @@ function startTimerAnimation() {
   frame();
 }
 
-// ---------- word input ----------
-$("word-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const input = $("word-input");
-  if (input.disabled || !room?.game || room.game.turnPlayerId !== myId) return;
-  const word = input.value.trim();
-  if (!word) return;
-  socket.emit("submitWord", word);
-  input.value = "";
-  socket.emit("typing", "");
+// ---------- central typing (inside bomb) ----------
+$("bomb-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const input = $("bomb-input");
+    const word = input.value.trim();
+    const chain = room?.game?.currentChain || "";
+    const full = chain + word;
+    if (full && room?.game?.turnPlayerId === myId) {
+      socket.emit("submitWord", full);
+      input.value = "";
+      $("bomb-typing").textContent = "";
+      $("wpm-display").textContent = "";
+      socket.emit("typing", "");
+      clearInterval(wpmInterval);
+    }
+  }
 });
 
-$("word-input").addEventListener("input", (e) => {
-  if (e.target.disabled || !room?.game || room.game.turnPlayerId !== myId) return;
-  socket.emit("typing", e.target.value);
+$("bomb-input").addEventListener("input", (e) => {
+  if (room?.game?.turnPlayerId !== myId) return;
+  const val = e.target.value;
+  const chain = room.game.currentChain || "";
+  $("bomb-typing").textContent = chain.toUpperCase() + val;
+  socket.emit("typing", val);
+  turnKeyStrokes += val.length - (prevValLength || 0);
+  prevValLength = val.length;
+  if (turnStartTime === 0 && val.length > 0) {
+    turnStartTime = Date.now();
+    clearInterval(wpmInterval);
+    wpmInterval = setInterval(updateWpm, 500);
+  }
+  updateWpm();
 });
+let prevValLength = 0;
+
+function updateWpm() {
+  const wpmEl = $("wpm-display");
+  if (!wpmEl) return;
+  if (turnStartTime === 0 || turnKeyStrokes === 0) { wpmEl.textContent = ""; return; }
+  const elapsed = (Date.now() - turnStartTime) / 1000 / 60;
+  if (elapsed < 0.01) { wpmEl.textContent = "..."; return; }
+  const wpm = Math.round((turnKeyStrokes / 5) / elapsed);
+  wpmEl.textContent = wpm + " WPM";
+}
 
 // ---------- game events ----------
 socket.on("typing", ({ playerId, text }) => {
-  const bubble = $("typing-" + playerId);
-  if (!bubble) return;
-  bubble.textContent = text;
-  bubble.classList.toggle("show", text.length > 0);
+  if (!room?.game) return;
+  const chain = room.game.currentChain || "";
+  if (playerId === room.game.turnPlayerId && playerId !== myId) {
+    $("bomb-typing").textContent = chain.toUpperCase() + text;
+  }
 });
 
 socket.on("wordAccepted", ({ playerId, word, bonusLife, nextChain, chainLength }) => {
@@ -544,6 +552,10 @@ socket.on("wordAccepted", ({ playerId, word, bonusLife, nextChain, chainLength }
     }
   }
   if (bonusLife && playerId === myId) toast("💖 Long word bonus — +1 life!");
+  $("bomb-typing").textContent = "";
+  $("bomb-input").value = "";
+  $("wpm-display").textContent = "";
+  clearInterval(wpmInterval);
 });
 
 socket.on("wordRejected", ({ playerId, word, reason }) => {
@@ -555,10 +567,6 @@ socket.on("wordRejected", ({ playerId, word, reason }) => {
   }
   if (playerId === myId) {
     sfx.reject();
-    const input = $("word-input");
-    input.classList.remove("wrong");
-    void input.offsetWidth;
-    input.classList.add("wrong");
     $("reject-msg").textContent = `❌ ${reason}`;
     clearTimeout($("reject-msg")._timer);
     $("reject-msg")._timer = setTimeout(() => ($("reject-msg").textContent = ""), 2000);
