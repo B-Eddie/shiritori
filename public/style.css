@@ -397,45 +397,29 @@ input::placeholder { color: #9b8fc0; }
   text-shadow: 0 0 24px rgba(255, 210, 63, 0.7); line-height: 1;
   letter-spacing: 2px;
 }
+.seat-typing {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: var(--accent2);
+  white-space: nowrap;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.seat-typing.show { opacity: 1; }
 .current-letter.chain-2 { font-size: 2.8rem; letter-spacing: 3px; }
 .current-letter.chain-3 { font-size: 2.3rem; letter-spacing: 2px; }
 .current-letter.chain-4 { font-size: 1.9rem; letter-spacing: 1px; }
 .current-letter.chain-5,
 .current-letter.chain-6 { font-size: 1.55rem; letter-spacing: 0; }
 .bomb-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 2px; opacity: 0.6; }
-.bomb-typing {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: #fff;
-  text-align: center;
-  min-height: 1.4em;
-  margin-top: 3px;
-  letter-spacing: 1px;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.5);
-  max-width: 90%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  pointer-events: none;
-}
-.bomb-input {
-  position: absolute;
-  opacity: 0;
-  width: 1px;
-  height: 1px;
-  pointer-events: none;
-}
-.bomb-input:focus { outline: none; }
-.wpm-display {
-  font-size: 0.55rem;
-  font-weight: 700;
-  color: var(--accent2);
-  text-align: center;
-  min-height: 1em;
-  letter-spacing: 1px;
-  opacity: 0.8;
-  margin-top: 1px;
-}
 
 .last-word-banner {
   text-align: center; min-height: 2em; font-size: 1.15rem; font-weight: 600;
@@ -448,11 +432,30 @@ input::placeholder { color: #9b8fc0; }
 .input-zone { width: min(480px, 92vw); margin: 6px auto 0; text-align: center; }
 .turn-indicator { font-weight: 700; font-size: 1.05rem; margin-bottom: 8px; min-height: 1.4em; }
 .turn-indicator .you { color: var(--accent); animation: pulse 1s ease-in-out infinite; }
+#word-form { display: flex; gap: 10px; }
+#word-form input { font-size: 1.2rem; font-weight: 600; letter-spacing: 1px; }
+#word-form input:disabled { opacity: 0.45; }
+#word-form input.wrong { animation: shake-input 0.35s; border-color: var(--danger); }
+.wpm-display {
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--accent2);
+  text-align: center;
+  min-height: 1.1em;
+  letter-spacing: 1px;
+  opacity: 0.75;
+  margin-top: 4px;
+}
 @keyframes bounce { 50% { transform: scale(1.15) translateY(-6px); } }
 @keyframes shake {
   0%, 100% { transform: translate(-50%, -50%); }
   25% { transform: translate(calc(-50% - 7px), -50%); }
   75% { transform: translate(calc(-50% + 7px), -50%); }
+}
+@keyframes shake-input {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
 }
 
 

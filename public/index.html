@@ -96,9 +96,6 @@
             <div id="bomb-orbit" class="bomb-orbit"></div>
             <div id="current-letter" class="current-letter">A</div>
             <div id="bomb-label" class="bomb-label">starts with</div>
-            <div id="bomb-typing" class="bomb-typing"></div>
-            <input id="bomb-input" class="bomb-input" autocomplete="off" autocapitalize="off" spellcheck="false" />
-            <div id="wpm-display" class="wpm-display"></div>
           </div>
         </div>
       </div>
@@ -108,7 +105,12 @@
 
     <div class="input-zone">
       <div id="turn-indicator" class="turn-indicator"></div>
+      <form id="word-form" autocomplete="off">
+        <input id="word-input" disabled placeholder="wait for your turn…" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        <button class="btn btn-primary" type="submit">GO!</button>
+      </form>
       <p id="reject-msg" class="error-msg"></p>
+      <div id="wpm-display" class="wpm-display"></div>
     </div>
 
     <div id="word-feed" class="word-feed"></div>

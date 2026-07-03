@@ -410,7 +410,8 @@ function renderPlayerOrbit(ordered, turnPlayerId, nextId, isMulti) {
         ${p.avatar}
       </div>
       <div class="orbit-name">${escapeHtml(p.name)}${p.id === myId ? " ⭐" : ""}</div>
-      <div class="orbit-lives">${hearts}</div>`;
+      <div class="orbit-lives">${hearts}</div>
+      <div id="typing-${p.id}" class="seat-typing"></div>`;
     orbit.appendChild(el);
   });
 }
@@ -418,23 +419,26 @@ function renderPlayerOrbit(ordered, turnPlayerId, nextId, isMulti) {
 let turnKeyStrokes = 0;
 let turnStartTime = 0;
 let wpmInterval = null;
+let prevValLength = 0;
 
 function renderTurn() {
   const g = room.game;
   const me = g.turnPlayerId === myId;
   const turnPlayer = room.players.find((p) => p.id === g.turnPlayerId);
-  const bombInput = $("bomb-input");
-  const bombTyping = $("bomb-typing");
+  const input = $("word-input");
+  const submitBtn = $("word-form").querySelector("button");
   const wpmEl = $("wpm-display");
 
   if (me) {
     $("turn-indicator").innerHTML = `<span class="you">🔥 YOUR TURN! 🔥</span>`;
-    bombInput.style.display = "";
-    bombInput.value = "";
-    bombInput.focus();
-    bombTyping.textContent = "";
+    input.disabled = false;
+    submitBtn.disabled = false;
+    input.placeholder = "type a word…";
+    input.value = "";
+    input.focus();
     turnKeyStrokes = 0;
     turnStartTime = 0;
+    prevValLength = 0;
     if (wpmEl) wpmEl.textContent = "";
     clearInterval(wpmInterval);
     if (lastTurnPlayerId !== myId) sfx.yourTurn();
@@ -451,13 +455,25 @@ function renderTurn() {
       msg = "You're out — watch the circle!";
     }
     $("turn-indicator").textContent = msg;
-    bombInput.style.display = "none";
-    bombInput.value = "";
+    input.disabled = true;
+    submitBtn.disabled = true;
+    input.placeholder = "wait for your turn…";
+    input.value = "";
     if (wpmEl) wpmEl.textContent = "";
     clearInterval(wpmInterval);
   }
   lastTurnPlayerId = g.turnPlayerId;
   $("bomb").classList.add("ticking");
+}
+
+function updateWpm() {
+  const wpmEl = $("wpm-display");
+  if (!wpmEl) return;
+  if (turnStartTime === 0 || turnKeyStrokes === 0) { wpmEl.textContent = ""; return; }
+  const elapsed = (Date.now() - turnStartTime) / 1000 / 60;
+  if (elapsed < 0.01) { wpmEl.textContent = "..."; return; }
+  const wpm = Math.round((turnKeyStrokes / 5) / elapsed);
+  wpmEl.textContent = wpm + " WPM";
 }
 
 function startTimerAnimation() {
@@ -484,30 +500,23 @@ function startTimerAnimation() {
   frame();
 }
 
-// ---------- central typing (inside bomb) ----------
-$("bomb-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    const input = $("bomb-input");
-    const word = input.value.trim();
-    const chain = room?.game?.currentChain || "";
-    const full = chain + word;
-    if (full && room?.game?.turnPlayerId === myId) {
-      socket.emit("submitWord", full);
-      input.value = "";
-      $("bomb-typing").textContent = "";
-      $("wpm-display").textContent = "";
-      socket.emit("typing", "");
-      clearInterval(wpmInterval);
-    }
-  }
+// ---------- word input ----------
+$("word-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("word-input");
+  if (input.disabled || !room?.game || room.game.turnPlayerId !== myId) return;
+  const word = input.value.trim();
+  if (!word) return;
+  socket.emit("submitWord", word);
+  input.value = "";
+  socket.emit("typing", "");
+  $("wpm-display").textContent = "";
+  clearInterval(wpmInterval);
 });
 
-$("bomb-input").addEventListener("input", (e) => {
-  if (room?.game?.turnPlayerId !== myId) return;
+$("word-input").addEventListener("input", (e) => {
+  if (e.target.disabled || !room?.game || room.game.turnPlayerId !== myId) return;
   const val = e.target.value;
-  const chain = room.game.currentChain || "";
-  $("bomb-typing").textContent = chain.toUpperCase() + val;
   socket.emit("typing", val);
   turnKeyStrokes += val.length - (prevValLength || 0);
   prevValLength = val.length;
@@ -518,25 +527,13 @@ $("bomb-input").addEventListener("input", (e) => {
   }
   updateWpm();
 });
-let prevValLength = 0;
-
-function updateWpm() {
-  const wpmEl = $("wpm-display");
-  if (!wpmEl) return;
-  if (turnStartTime === 0 || turnKeyStrokes === 0) { wpmEl.textContent = ""; return; }
-  const elapsed = (Date.now() - turnStartTime) / 1000 / 60;
-  if (elapsed < 0.01) { wpmEl.textContent = "..."; return; }
-  const wpm = Math.round((turnKeyStrokes / 5) / elapsed);
-  wpmEl.textContent = wpm + " WPM";
-}
 
 // ---------- game events ----------
 socket.on("typing", ({ playerId, text }) => {
-  if (!room?.game) return;
-  const chain = room.game.currentChain || "";
-  if (playerId === room.game.turnPlayerId && playerId !== myId) {
-    $("bomb-typing").textContent = chain.toUpperCase() + text;
-  }
+  const bubble = $("typing-" + playerId);
+  if (!bubble) return;
+  bubble.textContent = text;
+  bubble.classList.toggle("show", text.length > 0);
 });
 
 socket.on("wordAccepted", ({ playerId, word, bonusLife, nextChain, chainLength }) => {
@@ -552,8 +549,12 @@ socket.on("wordAccepted", ({ playerId, word, bonusLife, nextChain, chainLength }
     }
   }
   if (bonusLife && playerId === myId) toast("💖 Long word bonus — +1 life!");
-  $("bomb-typing").textContent = "";
-  $("bomb-input").value = "";
+  const typingBubble = $("typing-" + playerId);
+  if (typingBubble) typingBubble.textContent = "";
+  if (playerId === myId) {
+    const wi = $("word-input");
+    if (wi) wi.value = "";
+  }
   $("wpm-display").textContent = "";
   clearInterval(wpmInterval);
 });
