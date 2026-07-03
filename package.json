@@ -1,0 +1,15 @@
+{
+  "name": "shiritori",
+  "version": "1.0.0",
+  "description": "Last Letter! — English shiritori word game for 1v1 or groups, inspired by jklm.fun",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
+  }
+}

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Last Letter! — English Shiritori</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="bg-blobs">
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+    <div class="blob b3"></div>
+  </div>
+
+  <!-- ============ HOME SCREEN ============ -->
+  <section id="screen-home" class="screen active">
+    <div class="card home-card">
+      <h1 class="logo">LAST<span>LETTER</span><em>!</em></h1>
+      <p class="tagline">English shiritori — match the last letter, then letters, as the chain grows. Don't run out of time! 💣</p>
+
+      <div class="field">
+        <label>Your name</label>
+        <input id="name-input" maxlength="16" placeholder="e.g. WordWizard" autocomplete="off" />
+      </div>
+
+      <div class="field">
+        <label>Pick your face</label>
+        <div id="avatar-grid" class="avatar-grid"></div>
+      </div>
+
+      <div class="home-buttons">
+        <button id="btn-create" class="btn btn-primary big">Create Room</button>
+        <div class="join-row">
+          <input id="code-input" maxlength="4" placeholder="CODE" autocomplete="off" />
+          <button id="btn-join" class="btn btn-secondary">Join</button>
+        </div>
+      </div>
+      <p id="home-error" class="error-msg"></p>
+    </div>
+  </section>
+
+  <!-- ============ LOBBY SCREEN ============ -->
+  <section id="screen-lobby" class="screen">
+    <div class="card lobby-card">
+      <h2>Room <span id="lobby-code" class="room-code"></span>
+        <button id="btn-copy" class="btn btn-tiny" title="Copy room code">📋 copy</button>
+      </h2>
+      <p class="hint">Share the code with friends — works for 1v1 or a whole group (up to 12)!</p>
+
+      <div id="lobby-players" class="lobby-players"></div>
+
+      <div id="lobby-settings" class="settings">
+        <div class="setting">
+          <label>❤️ Lives</label>
+          <div class="seg" data-setting="lives" data-values="1,2,3,4,5"></div>
+        </div>
+        <div class="setting">
+          <label>⏱️ Seconds per turn</label>
+          <div class="seg" data-setting="turnSeconds" data-values="10,15,20,30"></div>
+        </div>
+        <div class="setting">
+          <label>🔤 Min word length</label>
+          <div class="seg" data-setting="minLength" data-values="2,3,4,5"></div>
+        </div>
+      </div>
+
+      <button id="btn-start" class="btn btn-primary big">Start Game 🚀</button>
+      <p id="lobby-wait" class="hint waiting" style="display:none">Waiting for the host to start…</p>
+    </div>
+  </section>
+
+  <!-- ============ GAME SCREEN ============ -->
+  <section id="screen-game" class="screen">
+    <div class="game-top">
+      <span class="room-code small" id="game-code"></span>
+      <span id="round-label"></span>
+    </div>
+
+    <div class="arena">
+      <div class="center-stage">
+        <svg id="turn-ring" class="turn-ring" viewBox="0 0 100 100" aria-hidden="true"></svg>
+        <div id="player-orbit" class="player-orbit" aria-label="Turn order"></div>
+        <div class="bomb-wrap">
+          <svg class="timer-ring" viewBox="0 0 120 120">
+            <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+            <circle id="ring-fg" class="ring-fg" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div id="bomb" class="bomb">
+            <div id="bomb-orbit" class="bomb-orbit"></div>
+            <div id="current-letter" class="current-letter">A</div>
+            <div id="bomb-label" class="bomb-label">starts with</div>
+          </div>
+        </div>
+      </div>
+      <div id="players-ring" class="players-ring-outer"></div>
+    </div>
+
+    <div id="last-word-banner" class="last-word-banner"></div>
+
+    <div class="input-zone">
+      <div id="turn-indicator" class="turn-indicator"></div>
+      <form id="word-form" autocomplete="off">
+        <input id="word-input" disabled placeholder="wait for your turn…" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        <button class="btn btn-primary" type="submit">GO!</button>
+      </form>
+      <p id="reject-msg" class="error-msg"></p>
+    </div>
+
+    <div id="word-feed" class="word-feed"></div>
+  </section>
+
+  <!-- ============ GAME OVER OVERLAY ============ -->
+  <div id="overlay-gameover" class="overlay">
+    <div class="card over-card">
+      <div id="winner-avatar" class="winner-avatar">🏆</div>
+      <h2 id="winner-title">Winner!</h2>
+      <div id="over-stats" class="over-stats"></div>
+      <button id="btn-again" class="btn btn-primary big">Back to Lobby 🔁</button>
+      <p id="over-wait" class="hint waiting" style="display:none">Waiting for the host…</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
