@@ -347,7 +347,7 @@ function setChainDisplay(chain, chainLength) {
   el.classList.remove("chain-2", "chain-3", "chain-4", "chain-5", "chain-6");
   if (chainLength >= 2) el.classList.add("chain-" + Math.min(chainLength, 6));
   const label = $("bomb-label");
-  if (label) label.textContent = chainLength === 1 ? "starts with" : `starts with (${chainLength} letters)`;
+  if (label) label.textContent = "";
 }
 
 // ---------- game rendering ----------
@@ -446,7 +446,7 @@ function renderTurn() {
     const alive = aliveTurnOrder();
     const myPos = alive.indexOf(myId);
     const curPos = alive.indexOf(g.turnPlayerId);
-    let msg = turnPlayer ? `${turnPlayer.avatar} ${turnPlayer.name}'s turn` : "";
+    let msg = turnPlayer ? `${turnPlayer.name}'s turn` : "";
     if (myPos >= 0 && curPos >= 0 && myPos !== curPos) {
       const ahead = (myPos - curPos + alive.length) % alive.length;
       if (ahead === 1) msg += " — you're up next!";
