@@ -399,19 +399,24 @@ input::placeholder { color: #9b8fc0; }
 }
 .seat-typing {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.55rem;
+  font-size: 0.75rem;
   font-weight: 700;
-  color: var(--accent2);
+  color: #222;
+  background: #fff;
+  border-radius: 8px;
+  padding: 3px 8px;
   white-space: nowrap;
-  max-width: 80px;
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0;
   transition: opacity 0.15s;
   pointer-events: none;
+  z-index: 10;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 }
 .seat-typing.show { opacity: 1; }
 .current-letter.chain-2 { font-size: 2.8rem; letter-spacing: 3px; }
