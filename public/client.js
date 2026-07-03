@@ -583,6 +583,12 @@ socket.on("eliminated", ({ playerId, name, left }) => {
   if (playerId === myId) toast("💀 You're out! Watch the rest of the match.");
 });
 
+socket.on("chainSkip", ({ chain, chainLength }) => {
+  const label = chainLength === 1 ? "letter" : `letters`;
+  addFeed("info", `🔄 Chain skipped! New starts with: "${chain.toUpperCase()}" (${chainLength} ${label})`);
+  toast(`🔄 Nobody got it — new chain: "${chain.toUpperCase()}"`);
+});
+
 socket.on("gameOver", ({ winnerId, winnerName, stats }) => {
   cancelAnimationFrame(timerRAF);
   $("bomb").classList.remove("ticking");
