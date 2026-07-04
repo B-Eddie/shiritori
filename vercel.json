@@ -1,12 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "rewrites": [
-    { "source": "/api/socket-io/:path*", "destination": "/api/socket-io" }
-  ],
   "functions": {
-    "api/socket-io.js": {
-      "maxDuration": 300,
+    "api/game.js": {
+      "maxDuration": 10,
       "includeFiles": "data/**"
     }
   }

@@ -1,21 +1,23 @@
-/* global io, confetti */
-const socket = io({
-  path: "/api/socket-io/socket.io",
-  transports: ["websocket"],
-  addTrailingSlash: false,
-  reconnectionDelay: 300,
-  reconnectionDelayMax: 2000,
-  reconnectionAttempts: Infinity,
+/* global firebase, confetti */
+
+firebase.initializeApp({
+  apiKey: "AIzaSyCdKfqwuUqguGtxiT8QxYHe2oSD_pJJEQg",
+  authDomain: "shiritori-9e4ba.firebaseapp.com",
+  databaseURL: "https://shiritori-9e4ba-default-rtdb.firebaseio.com",
+  projectId: "shiritori-9e4ba",
+  storageBucket: "shiritori-9e4ba.firebasestorage.app",
+  messagingSenderId: "867845060103",
+  appId: "1:867845060103:web:13f3608642eff152811ca2",
+  measurementId: "G-Y1TFXJNWCE",
 });
 
-// Persistent identity so we can reattach to our seat after a dropped
-// connection (page refresh, or Vercel recycling the function instance).
+const db = firebase.database();
+
 const myKey =
   localStorage.getItem("ll-key") ||
   (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
 localStorage.setItem("ll-key", myKey);
 
-// ---------- helpers ----------
 const $ = (id) => document.getElementById(id);
 const screens = { home: $("screen-home"), lobby: $("screen-lobby"), game: $("screen-game") };
 
@@ -32,7 +34,6 @@ function toast(msg) {
   t._timer = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
-// ---------- simple sounds (WebAudio) ----------
 let audioCtx = null;
 function beep(freq, dur = 0.08, type = "square", vol = 0.05) {
   try {
@@ -57,7 +58,6 @@ const sfx = {
   yourTurn: () => beep(880, 0.12, "triangle", 0.07),
 };
 
-// ---------- avatar picker ----------
 const AVATARS = ["🐸","🦊","🐼","🐙","🦄","🐧","🐯","🦖","🐝","🐢","🦉","🐌","🍕","🌮","🍩","🤖","👻","🎃","🌵","🦩","🐳","🧀","🍄","⚡"];
 let myAvatar = AVATARS[(Math.random() * AVATARS.length) | 0];
 
@@ -77,26 +77,143 @@ AVATARS.forEach((a) => {
 
 $("name-input").value = localStorage.getItem("ll-name") || "";
 
-// ---------- state ----------
 let room = null;
-const myId = myKey; // players are identified by persistent key, not socket id
+let roomCode = null;
 let timerRAF = null;
 let lastTickSecond = null;
 let lastTurnPlayerId = null;
-let reconnectTimer = null;
+let turnKeyStrokes = 0;
+let turnStartTime = 0;
+let wpmInterval = null;
+let prevValLength = 0;
+let typingRef = null;
+let typingHandler = null;
+let localTimer = null;
 
-socket.on("connect", () => {
-  if (room && reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-    // Silently rejoin our seat — no toast.
-    socket.emit(
-      "joinRoom",
-      { code: room.code, name: localStorage.getItem("ll-name") || "Player", avatar: myAvatar, key: myKey }
-    );
+// ---------- API helper ----------
+async function api(body) {
+  const r = await fetch("/api/game", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+// ---------- Firebase room listener ----------
+let roomRef = null;
+let roomListener = null;
+
+function listenRoom(code) {
+  if (roomRef) { roomRef.off("value", roomListener); }
+  roomCode = code;
+  roomRef = db.ref("rooms/" + code);
+  roomListener = (snap) => {
+    const data = snap.val();
+    if (!data) return;
+    room = data;
+    onRoomUpdate(data);
+  };
+  roomRef.on("value", roomListener);
+}
+
+let lastEventNum = 0;
+let lastErrorNum = 0;
+
+function onRoomUpdate(r) {
+  const me = r.players.find(p => p.id === myKey);
+  if (me && me.avatar !== myAvatar) {
+    myAvatar = me.avatar;
+    document.querySelectorAll(".avatar-option").forEach(el => {
+      el.classList.toggle("selected", el.textContent === myAvatar);
+    });
   }
-});
 
+  if (r.eventNum && r.eventNum > lastEventNum && r.events) {
+    lastEventNum = r.eventNum;
+    handleEvents(r.events);
+  }
+
+  if (r.lastErrorNum && r.lastErrorNum > lastErrorNum && r.lastError) {
+    lastErrorNum = r.lastErrorNum;
+    if (r.lastError.playerId === myKey) {
+      sfx.reject();
+      $("reject-msg").textContent = `❌ ${r.lastError.reason}`;
+      clearTimeout($("reject-msg")._timer);
+      $("reject-msg")._timer = setTimeout(() => ($("reject-msg").textContent = ""), 2000);
+    }
+  }
+
+  if (r.state === "lobby") {
+    $("overlay-gameover").classList.remove("active");
+    if (!screens.lobby.classList.contains("active")) showScreen("lobby");
+    renderLobby();
+  } else if (r.state === "playing") {
+    renderGame();
+  } else if (r.state === "over") {
+    handleGameOver(r);
+  }
+}
+
+function handleGameOver(r) {
+  cancelAnimationFrame(timerRAF);
+  $("bomb").classList.remove("ticking");
+  const result = r.lastResult;
+  const winner = result ? result.stats.find(s => s.id === result.winnerId) : null;
+  $("winner-avatar").textContent = winner ? winner.avatar : "🏁";
+  $("winner-title").textContent = winner
+    ? winner.id === myKey ? "🎉 YOU WIN! 🎉" : `${winner.name} wins!`
+    : "Game over!";
+
+  const statsWrap = $("over-stats");
+  statsWrap.innerHTML = "";
+  const stats = result ? result.stats : r.players;
+  stats
+    .sort((a, b) => b.wordsPlayed - a.wordsPlayed)
+    .forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "stat-row";
+      row.innerHTML = `<span class="sr-name">${s.avatar} ${escapeHtml(s.name)}</span>
+        <span class="sr-detail">${s.wordsPlayed} words${s.longestWord ? ` · longest: ${s.longestWord.toUpperCase()}` : ""}</span>`;
+      statsWrap.appendChild(row);
+    });
+
+  const isHost = room && room.hostId === myKey;
+  $("btn-again").style.display = isHost ? "" : "none";
+  $("over-wait").style.display = isHost ? "none" : "";
+  $("overlay-gameover").classList.add("active");
+  if (winner && winner.id === myKey) {
+    sfx.win();
+    fireConfetti();
+  }
+}
+
+// ---------- Firebase typing listener ----------
+function listenTyping(code) {
+  if (typingRef && typingHandler) {
+    typingRef.off("value", typingHandler);
+  }
+  typingRef = db.ref("typing/" + code);
+  typingHandler = (snap) => {
+    const data = snap.val() || {};
+    for (const pid in data) {
+      const bubble = $("typing-" + pid);
+      if (!bubble) continue;
+      const text = data[pid] || "";
+      bubble.textContent = text;
+      bubble.classList.toggle("show", text.length > 0);
+    }
+    for (const el of document.querySelectorAll(".seat-typing.show")) {
+      if (!data[el.id.replace("typing-", "")]) {
+        el.textContent = "";
+        el.classList.remove("show");
+      }
+    }
+  };
+  typingRef.on("value", typingHandler);
+}
+
+// ---------- Home actions ----------
 function getName() {
   const n = $("name-input").value.trim();
   if (!n) {
@@ -109,13 +226,14 @@ function getName() {
   return n;
 }
 
-// ---------- home actions ----------
-$("btn-create").onclick = () => {
+$("btn-create").onclick = async () => {
   const name = getName();
   if (!name) return;
-  socket.emit("createRoom", { name, avatar: myAvatar, key: myKey }, (res) => {
-    if (res.ok) showScreen("lobby");
-  });
+  const res = await api({ action: "createRoom", name, avatar: myAvatar, key: myKey });
+  if (res.ok) {
+    listenRoom(res.code);
+    showScreen("lobby");
+  }
 };
 
 $("btn-join").onclick = joinRoom;
@@ -132,34 +250,32 @@ function joinRoom() {
   attemptJoin(code, name, 3);
 }
 
-// The room lives in the server instance the host is connected to. If our
-// connection landed on a different (fresh) instance, reconnect and retry —
-// subsequent connections are routed to the warm instance holding the room.
-function attemptJoin(code, name, triesLeft) {
-  socket.emit("joinRoom", { code, name, avatar: myAvatar, key: myKey }, (res) => {
-    if (res.ok) {
-      $("home-error").textContent = "";
-      showScreen(res.state === "playing" ? "game" : "lobby");
-    } else if (res.error === "Room not found" && triesLeft > 0) {
-      $("home-error").textContent = "Looking for room…";
-      socket.disconnect();
-      setTimeout(() => {
-        socket.connect();
-        socket.once("connect", () => attemptJoin(code, name, triesLeft - 1));
-      }, 700);
-    } else {
-      $("home-error").textContent = res.error;
-    }
-  });
+async function attemptJoin(code, name, triesLeft) {
+  const res = await api({ action: "joinRoom", code, name, avatar: myAvatar, key: myKey });
+  if (res.ok) {
+    $("home-error").textContent = "";
+    listenRoom(code);
+    showScreen(res.state === "playing" ? "game" : "lobby");
+  } else if (res.error === "Room not found" && triesLeft > 0) {
+    $("home-error").textContent = "Looking for room…";
+    setTimeout(() => attemptJoin(code, name, triesLeft - 1), 1000);
+  } else {
+    $("home-error").textContent = res.error;
+  }
 }
 
-// ---------- lobby ----------
+// ---------- Lobby ----------
 $("btn-copy").onclick = () => {
-  navigator.clipboard.writeText(room.code).then(() => toast("Code copied! 📋"));
+  navigator.clipboard.writeText(roomCode).then(() => toast("Code copied! 📋"));
 };
 
-$("btn-start").onclick = () => socket.emit("startGame");
-$("btn-again").onclick = () => socket.emit("playAgain");
+$("btn-start").onclick = () => {
+  api({ action: "startGame", code: roomCode, key: myKey });
+};
+
+$("btn-again").onclick = () => {
+  api({ action: "playAgain", code: roomCode, key: myKey });
+};
 
 document.querySelectorAll(".seg").forEach((seg) => {
   const key = seg.dataset.setting;
@@ -168,26 +284,24 @@ document.querySelectorAll(".seg").forEach((seg) => {
     b.textContent = v;
     b.dataset.value = v;
     b.onclick = () => {
-      if (!room || room.hostId !== myId) return;
-      socket.emit("updateSettings", { ...room.settings, [key]: Number(v) });
+      if (!room || room.hostId !== myKey) return;
+      api({ action: "updateSettings", code: roomCode, key: myKey, settings: { ...room.settings, [key]: Number(v) } });
     };
     seg.appendChild(b);
   });
 });
 
 function renderLobby() {
-  $("lobby-code").textContent = room.code;
-  const isHost = room.hostId === myId;
-
+  $("lobby-code").textContent = roomCode;
+  const isHost = room.hostId === myKey;
   const wrap = $("lobby-players");
   wrap.innerHTML = "";
   room.players.forEach((p) => {
     const d = document.createElement("div");
     d.className = "lobby-player";
-    d.innerHTML = `<span class="av">${p.avatar}</span> ${escapeHtml(p.name)}${p.id === room.hostId ? ' <span class="crown">👑</span>' : ""}${p.id === myId ? " (you)" : ""}`;
+    d.innerHTML = `<span class="av">${p.avatar}</span> ${escapeHtml(p.name)}${p.id === room.hostId ? ' <span class="crown">👑</span>' : ""}${p.id === myKey ? " (you)" : ""}`;
     wrap.appendChild(d);
   });
-
   document.querySelectorAll(".seg").forEach((seg) => {
     const key = seg.dataset.setting;
     seg.querySelectorAll("button").forEach((b) => {
@@ -195,41 +309,36 @@ function renderLobby() {
       b.disabled = !isHost;
     });
   });
-
   $("btn-start").style.display = isHost ? "" : "none";
   $("lobby-wait").style.display = isHost ? "none" : "";
 }
 
-// ---------- room updates ----------
-socket.on("room", (r) => {
-  room = r;
-  const me = r.players.find(p => p.id === myId);
-  if (me && me.avatar !== myAvatar) {
-    myAvatar = me.avatar;
-    document.querySelectorAll(".avatar-option").forEach(el => {
-      el.classList.toggle("selected", el.textContent === myAvatar);
-    });
-  }
-  if (r.state === "lobby") {
-    $("overlay-gameover").classList.remove("active");
-    if (!screens.lobby.classList.contains("active")) showScreen("lobby");
-    renderLobby();
-  } else if (r.state === "playing") {
-    renderGame();
-  }
-});
-
-socket.on("gameStarted", () => {
-  clearTimeout(reconnectTimer);
-  reconnectTimer = null;
-  lastTurnPlayerId = null;
-  $("word-feed").innerHTML = "";
-  $("last-word-banner").innerHTML = "";
-  $("overlay-gameover").classList.remove("active");
+// ---------- Game rendering ----------
+function renderGame() {
+  if (!room) return;
+  const g = room.game;
+  if (!g) return;
   showScreen("game");
-  addFeed("info", "🎮 Game on! One player at a time — turns go clockwise around the circle.");
-  renderGame();
-});
+  $("game-code").textContent = roomCode;
+  $("round-label").textContent = `Round ${g.round + 1}`;
+  setChainDisplay(g.currentChain, g.chainLength);
+  renderSeats();
+  renderTurn();
+  startTimerAnimation();
+  listenTyping(roomCode);
+}
+
+const RING_CIRC = 2 * Math.PI * 52;
+
+function setChainDisplay(chain, chainLength) {
+  const el = $("current-letter");
+  if (!el) return;
+  el.textContent = chain.toUpperCase();
+  el.classList.remove("chain-2", "chain-3", "chain-4", "chain-5", "chain-6");
+  if (chainLength >= 2) el.classList.add("chain-" + Math.min(chainLength, 6));
+  const label = $("bomb-label");
+  if (label) label.textContent = "";
+}
 
 function playersInTurnOrder() {
   const g = room.game;
@@ -270,15 +379,10 @@ function orbitRadius(n) {
   return 46;
 }
 
-// Percentage coords for the turn-order SVG (viewBox 0 0 100 100).
 function seatPosition(i, n) {
   const angle = orbitAngle(i, n);
   const r = orbitRadius(n);
-  return {
-    x: 50 + r * Math.cos(angle),
-    y: 50 + r * Math.sin(angle),
-    angle,
-  };
+  return { x: 50 + r * Math.cos(angle), y: 50 + r * Math.sin(angle), angle };
 }
 
 function renderTurnRing(ordered, turnPlayerId, nextPlayerId) {
@@ -286,10 +390,7 @@ function renderTurnRing(ordered, turnPlayerId, nextPlayerId) {
   const arena = document.querySelector(".arena");
   const isMulti = ordered.length >= 2;
   arena?.classList.toggle("multiplayer", isMulti);
-  if (!svg || !isMulti) {
-    if (svg) svg.innerHTML = "";
-    return;
-  }
+  if (!svg || !isMulti) { if (svg) svg.innerHTML = ""; return; }
   const n = ordered.length;
   const parts = [];
   for (let i = 0; i < n; i++) {
@@ -303,17 +404,6 @@ function renderTurnRing(ordered, turnPlayerId, nextPlayerId) {
     );
   }
   svg.innerHTML = parts.join("");
-}
-
-function formatChain(chain, chainLength) {
-  return chain.toUpperCase();
-}
-
-function highlightWordSuffix(word, chainLength) {
-  const n = Math.min(chainLength || 1, word.length);
-  const base = word.slice(0, -n).toUpperCase();
-  const tail = word.slice(-n).toUpperCase();
-  return `<span class="w">${base}<span class="hl">${tail}</span></span>`;
 }
 
 function renderBombOrbit(ordered, turnPlayerId, nextId, isMulti) {
@@ -338,51 +428,11 @@ function renderBombOrbit(ordered, turnPlayerId, nextId, isMulti) {
   });
 }
 
-function setChainDisplay(chain, chainLength) {
-  const el = $("current-letter");
-  if (!el) return;
-  el.textContent = formatChain(chain, chainLength);
-  el.classList.remove("chain-2", "chain-3", "chain-4", "chain-5", "chain-6");
-  if (chainLength >= 2) el.classList.add("chain-" + Math.min(chainLength, 6));
-  const label = $("bomb-label");
-  if (label) label.textContent = "";
-}
-
-// ---------- game rendering ----------
-const RING_CIRC = 2 * Math.PI * 52; // matches SVG r=52
-
-function renderGame() {
-  if (!room.game) return;
-  showScreen("game");
-  const g = room.game;
-
-  $("game-code").textContent = room.code;
-  $("round-label").textContent = `Round ${g.round + 1}`;
-  setChainDisplay(g.currentChain, g.chainLength);
-
-  renderSeats();
-  renderTurn();
-  startTimerAnimation();
-}
-
-function renderSeats() {
-  const g = room.game;
-  const ordered = playersInTurnOrder();
-  const n = ordered.length;
-  const nextId = nextTurnPlayerId(g.turnPlayerId);
-  const isMulti = n >= 2;
-
-  renderBombOrbit(ordered, g.turnPlayerId, nextId, isMulti);
-  renderPlayerOrbit(ordered, g.turnPlayerId, nextId, isMulti);
-  renderTurnRing(ordered, g.turnPlayerId, nextId);
-}
-
 function renderPlayerOrbit(ordered, turnPlayerId, nextId, isMulti) {
   const orbit = $("player-orbit");
   orbit.innerHTML = "";
   orbit.classList.toggle("active", isMulti);
   if (!isMulti) return;
-
   const n = ordered.length;
   ordered.forEach((p, i) => {
     const pos = seatPosition(i, n);
@@ -407,21 +457,26 @@ function renderPlayerOrbit(ordered, turnPlayerId, nextId, isMulti) {
         <span class="orbit-order">${i + 1}</span>
         ${p.avatar}
       </div>
-      <div class="orbit-name">${escapeHtml(p.name)}${p.id === myId ? " ⭐" : ""}</div>
+      <div class="orbit-name">${escapeHtml(p.name)}${p.id === myKey ? " ⭐" : ""}</div>
       <div class="orbit-lives">${hearts}</div>
       <div id="typing-${p.id}" class="seat-typing"></div>`;
     orbit.appendChild(el);
   });
 }
 
-let turnKeyStrokes = 0;
-let turnStartTime = 0;
-let wpmInterval = null;
-let prevValLength = 0;
+function renderSeats() {
+  const g = room.game;
+  const ordered = playersInTurnOrder();
+  const nextId = nextTurnPlayerId(g.turnPlayerId);
+  const isMulti = ordered.length >= 2;
+  renderBombOrbit(ordered, g.turnPlayerId, nextId, isMulti);
+  renderPlayerOrbit(ordered, g.turnPlayerId, nextId, isMulti);
+  renderTurnRing(ordered, g.turnPlayerId, nextId);
+}
 
 function renderTurn() {
   const g = room.game;
-  const me = g.turnPlayerId === myId;
+  const me = g.turnPlayerId === myKey;
   const turnPlayer = room.players.find((p) => p.id === g.turnPlayerId);
   const input = $("word-input");
   const submitBtn = $("word-form").querySelector("button");
@@ -439,10 +494,10 @@ function renderTurn() {
     prevValLength = 0;
     if (wpmEl) wpmEl.textContent = "";
     clearInterval(wpmInterval);
-    if (lastTurnPlayerId !== myId) sfx.yourTurn();
+    if (lastTurnPlayerId !== myKey) sfx.yourTurn();
   } else {
     const alive = aliveTurnOrder();
-    const myPos = alive.indexOf(myId);
+    const myPos = alive.indexOf(myKey);
     const curPos = alive.indexOf(g.turnPlayerId);
     let msg = turnPlayer ? `${turnPlayer.name}'s turn` : "";
     if (myPos >= 0 && curPos >= 0 && myPos !== curPos) {
@@ -462,6 +517,7 @@ function renderTurn() {
   }
   lastTurnPlayerId = g.turnPlayerId;
   $("bomb").classList.add("ticking");
+  startLocalTimer(g.turnEndsAt);
 }
 
 function updateWpm() {
@@ -474,20 +530,25 @@ function updateWpm() {
   wpmEl.textContent = wpm + " WPM";
 }
 
+function startLocalTimer(turnEndsAt) {
+  clearTimeout(localTimer);
+  const delay = Math.max(0, turnEndsAt - Date.now());
+  localTimer = setTimeout(() => {
+    api({ action: "timeout", code: roomCode, key: myKey });
+  }, delay + 200);
+}
+
 function startTimerAnimation() {
   cancelAnimationFrame(timerRAF);
   const g = room.game;
   const ringFg = $("ring-fg");
   const total = g.turnSeconds * 1000;
-
   function frame() {
-    if (!room.game) return;
+    if (!room?.game) return;
     const remaining = Math.max(0, room.game.turnEndsAt - Date.now());
     const frac = remaining / total;
     ringFg.style.strokeDashoffset = RING_CIRC * (1 - frac);
     ringFg.classList.toggle("hot", frac < 0.35);
-
-    // tick sound in the final 5 seconds
     const sec = Math.ceil(remaining / 1000);
     if (sec <= 5 && sec !== lastTickSecond && remaining > 0) {
       lastTickSecond = sec;
@@ -498,24 +559,35 @@ function startTimerAnimation() {
   frame();
 }
 
-// ---------- word input ----------
-$("word-form").addEventListener("submit", (e) => {
+// ---------- Word input ----------
+$("word-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = $("word-input");
-  if (input.disabled || !room?.game || room.game.turnPlayerId !== myId) return;
+  if (input.disabled || !room?.game || room.game.turnPlayerId !== myKey) return;
   const word = input.value.trim();
   if (!word) return;
-  socket.emit("submitWord", word);
   input.value = "";
-  socket.emit("typing", "");
   $("wpm-display").textContent = "";
   clearInterval(wpmInterval);
+  await db.ref("typing/" + roomCode + "/" + myKey).remove();
+  const res = await api({ action: "submitWord", code: roomCode, word, key: myKey });
+  if (!res.ok && res.errors) {
+    for (const err of res.errors) {
+      if (err.playerId === myKey) {
+        sfx.reject();
+        $("reject-msg").textContent = `❌ ${err.reason}`;
+        clearTimeout($("reject-msg")._timer);
+        $("reject-msg")._timer = setTimeout(() => ($("reject-msg").textContent = ""), 2000);
+      }
+    }
+  }
+  // Events will arrive via the Firebase listener
 });
 
 $("word-input").addEventListener("input", (e) => {
-  if (e.target.disabled || !room?.game || room.game.turnPlayerId !== myId) return;
+  if (e.target.disabled || !room?.game || room.game.turnPlayerId !== myKey) return;
   const val = e.target.value;
-  socket.emit("typing", val);
+  db.ref("typing/" + roomCode + "/" + myKey).set(val);
   turnKeyStrokes += val.length - (prevValLength || 0);
   prevValLength = val.length;
   if (turnStartTime === 0 && val.length > 0) {
@@ -526,120 +598,66 @@ $("word-input").addEventListener("input", (e) => {
   updateWpm();
 });
 
-// ---------- game events ----------
-socket.on("typing", ({ playerId, text }) => {
-  const bubble = $("typing-" + playerId);
-  if (!bubble) return;
-  bubble.textContent = text;
-  bubble.classList.toggle("show", text.length > 0);
-});
-
-socket.on("wordAccepted", ({ playerId, word, bonusLife, nextChain, chainLength }) => {
-  const p = room?.players.find((pl) => pl.id === playerId);
-  const name = p ? p.name : "???";
-  sfx.accept();
-  addFeed("good", `<span class="who">${escapeHtml(name)}:</span> <span class="word">${word.toUpperCase()}</span>${bonusLife ? " 💖 +1 life (8+ letters!)" : ""}`);
-  $("last-word-banner").innerHTML = highlightWordSuffix(word, chainLength);
-  if (chainLength > 1) {
-    const prevLen = room?.game?.chainLength || 1;
-    if (chainLength > prevLen) {
-      toast(`🔗 Chain up! Next word starts with "${nextChain.toUpperCase()}" (${chainLength} letters)`);
+// ---------- Event handling ----------
+function handleEvents(events) {
+  for (const ev of events) {
+    switch (ev.type) {
+      case "accepted": {
+        const p = room?.players.find((pl) => pl.id === ev.playerId);
+        const name = p ? p.name : "???";
+        sfx.accept();
+        addFeed("good", `<span class="who">${escapeHtml(name)}:</span> <span class="word">${ev.word.toUpperCase()}</span>${ev.bonusLife ? " 💖 +1 life (8+ letters!)" : ""}`);
+        $("last-word-banner").innerHTML = highlightWordSuffix(ev.word, ev.chainLength);
+        if (ev.chainLength > 1) {
+          const prevLen = room?.game?.chainLength || 1;
+          if (ev.chainLength > prevLen) {
+            toast(`🔗 Chain up! Next word starts with "${ev.nextChain.toUpperCase()}" (${ev.chainLength} letters)`);
+          }
+        }
+        if (ev.bonusLife && ev.playerId === myKey) toast("💖 Long word bonus — +1 life!");
+        const typingBubble = $("typing-" + ev.playerId);
+        if (typingBubble) typingBubble.textContent = "";
+        if (ev.playerId === myKey) {
+          const wi = $("word-input");
+          if (wi) wi.value = "";
+        }
+        $("wpm-display").textContent = "";
+        clearInterval(wpmInterval);
+        break;
+      }
+      case "boom": {
+        sfx.boom();
+        const bomb = $("bomb");
+        bomb.classList.remove("exploded");
+        void bomb.offsetWidth;
+        bomb.classList.add("exploded");
+        const pl = room?.players.find((pl) => pl.id === ev.playerId);
+        if (pl) addFeed("bad", `💥 <span class="who">${escapeHtml(pl.name)}</span> ran out of time! ${ev.livesLeft > 0 ? `${ev.livesLeft} ❤️ left` : ""}`);
+        if (ev.playerId === myKey && ev.livesLeft > 0) toast("💥 BOOM! You lost a life!");
+        break;
+      }
+      case "eliminated": {
+        addFeed("info", ev.left ? `🚪 ${escapeHtml(ev.name)} left the game` : `💀 ${escapeHtml(ev.name)} is out!`);
+        if (ev.playerId === myKey) toast("💀 You're out! Watch the rest of the match.");
+        break;
+      }
+      case "chainSkip": {
+        const label = ev.chainLength === 1 ? "letter" : `letters`;
+        addFeed("info", `🔄 Chain skipped! New starts with: "${ev.chain.toUpperCase()}" (${ev.chainLength} ${label})`);
+        toast(`🔄 Nobody got it — new chain: "${ev.chain.toUpperCase()}"`);
+        break;
+      }
     }
   }
-  if (bonusLife && playerId === myId) toast("💖 Long word bonus — +1 life!");
-  const typingBubble = $("typing-" + playerId);
-  if (typingBubble) typingBubble.textContent = "";
-  if (playerId === myId) {
-    const wi = $("word-input");
-    if (wi) wi.value = "";
-  }
-  $("wpm-display").textContent = "";
-  clearInterval(wpmInterval);
-});
+}
 
-socket.on("wordRejected", ({ playerId, word, reason }) => {
-  const seat = $("seat-" + playerId);
-  if (seat) {
-    seat.classList.remove("shake");
-    void seat.offsetWidth;
-    seat.classList.add("shake");
-  }
-  if (playerId === myId) {
-    sfx.reject();
-    $("reject-msg").textContent = `❌ ${reason}`;
-    clearTimeout($("reject-msg")._timer);
-    $("reject-msg")._timer = setTimeout(() => ($("reject-msg").textContent = ""), 2000);
-  }
-  const p = room?.players.find((pl) => pl.id === playerId);
-  if (p && word) addFeed("bad", `<span class="who">${escapeHtml(p.name)}:</span> ${word.toUpperCase()} — ${reason}`);
-});
+function highlightWordSuffix(word, chainLength) {
+  const n = Math.min(chainLength || 1, word.length);
+  const base = word.slice(0, -n).toUpperCase();
+  const tail = word.slice(-n).toUpperCase();
+  return `<span class="w">${base}<span class="hl">${tail}</span></span>`;
+}
 
-socket.on("boom", ({ playerId, livesLeft }) => {
-  sfx.boom();
-  const bomb = $("bomb");
-  bomb.classList.remove("exploded");
-  void bomb.offsetWidth;
-  bomb.classList.add("exploded");
-  const p = room?.players.find((pl) => pl.id === playerId);
-  if (p) addFeed("bad", `💥 <span class="who">${escapeHtml(p.name)}</span> ran out of time! ${livesLeft > 0 ? `${livesLeft} ❤️ left` : ""}`);
-  if (playerId === myId && livesLeft > 0) toast("💥 BOOM! You lost a life!");
-});
-
-socket.on("eliminated", ({ playerId, name, left }) => {
-  addFeed("info", left ? `🚪 ${escapeHtml(name)} left the game` : `💀 ${escapeHtml(name)} is out!`);
-  if (playerId === myId) toast("💀 You're out! Watch the rest of the match.");
-});
-
-socket.on("chainSkip", ({ chain, chainLength }) => {
-  const label = chainLength === 1 ? "letter" : `letters`;
-  addFeed("info", `🔄 Chain skipped! New starts with: "${chain.toUpperCase()}" (${chainLength} ${label})`);
-  toast(`🔄 Nobody got it — new chain: "${chain.toUpperCase()}"`);
-});
-
-socket.on("gameOver", ({ winnerId, winnerName, stats }) => {
-  cancelAnimationFrame(timerRAF);
-  $("bomb").classList.remove("ticking");
-
-  const winner = stats.find((s) => s.id === winnerId);
-  $("winner-avatar").textContent = winner ? winner.avatar : "🏁";
-  $("winner-title").textContent = winnerId
-    ? winnerId === myId ? "🎉 YOU WIN! 🎉" : `${winnerName} wins!`
-    : "Game over!";
-
-  const statsWrap = $("over-stats");
-  statsWrap.innerHTML = "";
-  stats
-    .sort((a, b) => b.wordsPlayed - a.wordsPlayed)
-    .forEach((s) => {
-      const row = document.createElement("div");
-      row.className = "stat-row";
-      row.innerHTML = `<span class="sr-name">${s.avatar} ${escapeHtml(s.name)}</span>
-        <span class="sr-detail">${s.wordsPlayed} words${s.longestWord ? ` · longest: ${s.longestWord.toUpperCase()}` : ""}</span>`;
-      statsWrap.appendChild(row);
-    });
-
-  const isHost = room && room.hostId === myId;
-  $("btn-again").style.display = isHost ? "" : "none";
-  $("over-wait").style.display = isHost ? "none" : "";
-  $("overlay-gameover").classList.add("active");
-
-  if (winnerId === myId) {
-    sfx.win();
-    fireConfetti();
-  }
-});
-
-socket.on("disconnect", () => {
-  if (room) {
-    // Wait 4s before showing "connection lost" — reconnection is usually instant.
-    clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(() => {
-      if (room) toast("Connection lost — reconnecting… 🔌");
-    }, 4000);
-  }
-});
-
-// ---------- misc ----------
 function addFeed(kind, html) {
   const feed = $("word-feed");
   const d = document.createElement("div");
