@@ -3,8 +3,8 @@ const socket = io({
   path: "/api/socket-io/socket.io",
   transports: ["websocket"],
   addTrailingSlash: false,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000,
+  reconnectionDelay: 300,
+  reconnectionDelayMax: 2000,
   reconnectionAttempts: Infinity,
 });
 
@@ -83,29 +83,16 @@ const myId = myKey; // players are identified by persistent key, not socket id
 let timerRAF = null;
 let lastTickSecond = null;
 let lastTurnPlayerId = null;
-let wasDisconnected = false;
-let reconnectAttempts = 0;
+let reconnectTimer = null;
 
 socket.on("connect", () => {
-  if (wasDisconnected && room) {
+  if (room && reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    // Silently rejoin our seat — no toast.
     socket.emit(
       "joinRoom",
-      { code: room.code, name: localStorage.getItem("ll-name") || "Player", avatar: myAvatar, key: myKey },
-      (res) => {
-        if (res.ok) {
-          reconnectAttempts = 0;
-          wasDisconnected = false;
-          toast("Reconnected! 🔌");
-        } else {
-          reconnectAttempts++;
-          if (reconnectAttempts > 15) {
-            room = null;
-            showScreen("home");
-            $("home-error").textContent = "Connection lost — the room is gone.";
-          }
-          // otherwise stay in the reconnect loop; Socket.IO will retry
-        }
-      }
+      { code: room.code, name: localStorage.getItem("ll-name") || "Player", avatar: myAvatar, key: myKey }
     );
   }
 });
@@ -233,8 +220,8 @@ socket.on("room", (r) => {
 });
 
 socket.on("gameStarted", () => {
-  wasDisconnected = false;
-  reconnectAttempts = 0;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
   lastTurnPlayerId = null;
   $("word-feed").innerHTML = "";
   $("last-word-banner").innerHTML = "";
@@ -644,13 +631,12 @@ socket.on("gameOver", ({ winnerId, winnerName, stats }) => {
 
 socket.on("disconnect", () => {
   if (room) {
-    wasDisconnected = true;
-    toast("Connection lost — reconnecting… 🔌");
+    // Wait 4s before showing "connection lost" — reconnection is usually instant.
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+      if (room) toast("Connection lost — reconnecting… 🔌");
+    }, 4000);
   }
-});
-
-socket.on("connect_error", () => {
-  if (room) wasDisconnected = true;
 });
 
 // ---------- misc ----------
